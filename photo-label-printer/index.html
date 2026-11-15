@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<title>사진 라벨 인쇄</title>
+<style>
+  :root { --bg:#111; --fg:#f2f2f2; --card:#1e1e1e; --accent:#4da3ff; --ok:#4cd07d; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 -apple-system,system-ui,sans-serif;
+         padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); max-width:560px; margin-inline:auto; }
+  h1 { font-size:20px; margin:16px 0 8px; }
+  .card { background:var(--card); border-radius:14px; padding:12px; margin:12px 0; }
+  button { font:inherit; border:0; border-radius:10px; padding:12px 16px; background:#333; color:var(--fg); }
+  button.primary { background:var(--accent); color:#001a33; font-weight:700; }
+  button:disabled { opacity:.4; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .row > * { flex:1; }
+  video, #preview { width:100%; border-radius:10px; background:#000; display:block; }
+  #preview { background:#fff; image-rendering:pixelated; max-height:50vh; object-fit:contain; }
+  label { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; }
+  select, input[type=number] { font:inherit; background:#333; color:var(--fg); border:0; border-radius:8px; padding:8px; }
+  input[type=range] { flex:1; }
+  #status { font-size:14px; }
+  #status.ok { color:var(--ok); } #status.bad { color:var(--bad); }
+  #log { font:12px/1.3 ui-monospace,monospace; white-space:pre-wrap; max-height:140px; overflow:auto; color:#aaa; }
+  details summary { cursor:pointer; padding:4px 0; }
+</style>
+</head>
+<body>
+<h1>📷 사진 → 라벨 인쇄</h1>
+
+<div class="card">
+  <div class="row">
+    <button id="btnConnect" class="primary">프린터 연결</button>
+    <button id="btnDisconnect" disabled>연결 해제</button>
+  </div>
+  <div id="status">프린터 미연결</div>
+</div>
+
+<div class="card">
+  <video id="video" playsinline muted autoplay></video>
+  <div class="row" style="margin-top:8px">
+    <button id="btnShot" class="primary">📸 촬영</button>
+    <button id="btnFlip">카메라 전환</button>
+    <button id="btnFile">앨범/카메라앱</button>
+  </div>
+  <input id="file" type="file" accept="image/*" capture="environment" hidden>
+  <label><span>촬영 즉시 인쇄</span><input id="autoPrint" type="checkbox" checked></label>
+</div>
+
+<div class="card">
+  <canvas id="preview"></canvas>
+  <div class="row" style="margin-top:8px">
+    <button id="btnPrint" class="primary" disabled>🖨 인쇄</button>
+    <button id="btnTest">테스트 인쇄</button>
+  </div>
+</div>
+
+<div class="card">
+  <details>
+    <summary>⚙ 인쇄 설정</summary>
+    <label>프로토콜
+      <select id="protocol">
+        <option value="escpos">ESC/POS (감열 영수증/포토 계열)</option>
+        <option value="tspl">TSPL (라벨 계열)</option>
+      </select></label>
+    <label>용지 폭(도트)
+      <select id="width">
+        <option value="384">384 (58mm, 203dpi)</option>
+        <option value="576">576 (80mm)</option>
+        <option value="320">320 (40mm)</option>
+        <option value="240">240 (30mm)</option>
+        <option value="96">96 (12mm)</option>
+      </select></label>
+    <label>라벨 높이(mm, TSPL)<input id="labelH" type="number" value="40" min="10" max="200" style="width:80px"></label>
+    <label>변환
+      <select id="dither">
+        <option value="fs">디더링 (사진용)</option>
+        <option value="thr">흑백 임계값 (글자/로고)</option>
+      </select></label>
+    <label>밝기 <input id="bright" type="range" min="-80" max="80" value="0"></label>
+    <label>대비 <input id="contrast" type="range" min="-50" max="100" value="30"></label>
+    <label>90° 회전<input id="rotate" type="checkbox"></label>
+    <label>색 반전<input id="invert" type="checkbox"></label>
+    <label>BLE 전송 단위(byte)<input id="chunk" type="number" value="100" min="20" max="512" style="width:80px"></label>
+    <label>전송 간격(ms)<input id="delay" type="number" value="10" min="0" max="200" style="width:80px"></label>
+    <label>인쇄 후 용지 이송(줄)<input id="feed" type="number" value="3" min="0" max="20" style="width:80px"></label>
+    <label>쓰기 특성(Characteristic)<select id="charSel"><option value="">자동</option></select></label>
+  </details>
+</div>
+
+<div class="card"><div id="log"></div></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const logEl = $('log');
+const log = m => { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scrollHeight; console.log(m); };
+const setStatus = (m, cls='') => { $('status').textContent = m; $('status').className = cls; };
+
+// ---------- 설정 저장 ----------
+const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','autoPrint'];
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('plp') || '{}');
+    for (const k of SETTINGS) if (k in s) { const e = $(k); e.type === 'checkbox' ? e.checked = s[k] : e.value = s[k]; }
+  } catch {}
+}
+function saveSettings() {
+  try {
+    const s = {}; for (const k of SETTINGS) { const e = $(k); s[k] = e.type === 'checkbox' ? e.checked : e.value; }
+    localStorage.setItem('plp', JSON.stringify(s));
+  } catch {}
+}
+loadSettings();
+SETTINGS.forEach(k => $(k).addEventListener('change', () => { saveSettings(); if (lastSource) render(); }));
+['bright','contrast'].forEach(k => $(k).addEventListener('input', () => lastSource && render()));
+
+// ---------- Bluetooth ----------
+// 라벨/영수증 프린터에서 흔한 서비스 UUID (optionalServices에 없으면 접근 불가)
+const KNOWN_SERVICES = [0xff00, 0xffe0, 0xfee7, 0xae30, 0x18f0, 0xff12, 0xfff0, 0xfe59,
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+  '0000ff00-0000-1000-8000-00805f9b34fb'];
+let device = null, writeChars = [], writeChar = null;
+
+async function connect() {
+  if (!navigator.bluetooth) {
+    setStatus('이 브라우저는 Web Bluetooth 미지원 (안드로이드 크롬 / 아이폰은 Bluefy 앱 사용)', 'bad');
+    return;
+  }
+  try {
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: KNOWN_SERVICES });
+    device.addEventListener('gattserverdisconnected', () => { setStatus('연결 끊김', 'bad'); updateButtons(); });
+    setStatus('연결 중…');
+    const server = await device.gatt.connect();
+    const services = await server.getPrimaryServices();
+    writeChars = [];
+    for (const s of services) {
+      let chars = [];
+      try { chars = await s.getCharacteristics(); } catch {}
+      for (const c of chars) {
+        const p = c.properties;
+        log(`svc ${s.uuid} chr ${c.uuid} ` +
+            `[${['write','writeWithoutResponse','notify'].filter(k => p[k]).join(',')}]`);
+        if (p.write || p.writeWithoutResponse) writeChars.push(c);
+      }
+    }
+    if (!writeChars.length) throw new Error('쓰기 가능한 특성을 찾지 못함 (클래식 블루투스 전용 프린터일 수 있음)');
+    // 우선순위: 알려진 UUID > writeWithoutResponse
+    const pref = ['ff02','ae01','2af1','49535343-8841','bef8d6c9','ffe1','fff2'];
+    writeChars.sort((a, b) => score(b, pref) - score(a, pref));
+    $('charSel').innerHTML = '<option value="">자동</option>' + writeChars.map((c, i) => `<option value="${i}">${c.uuid}</option>`).join('');
+    writeChar = writeChars[0];
+    log('사용할 특성: ' + writeChar.uuid);
+    setStatus(`연결됨: ${device.name || '(이름 없음)'}`, 'ok');
+  } catch (e) {
+    setStatus('연결 실패: ' + e.message, 'bad'); log(String(e));
+  }
+  updateButtons();
+}
+const score = (c, pref) => (pref.some(p => c.uuid.includes(p)) ? 10 : 0) + (c.properties.writeWithoutResponse ? 1 : 0);
+$('charSel').addEventListener('change', e => { writeChar = e.target.value === '' ? writeChars[0] : writeChars[+e.target.value]; });
+
+function disconnect() { if (device?.gatt?.connected) device.gatt.disconnect(); }
+const isConnected = () => !!(device?.gatt?.connected && writeChar);
+function updateButtons() {
+  $('btnDisconnect').disabled = !isConnected();
+  $('btnPrint').disabled = !isConnected() || !lastBits;
+}
+$('btnConnect').onclick = connect;
+$('btnDisconnect').onclick = () => { disconnect(); updateButtons(); };
+
+async function sendBytes(bytes) {
+  const size = Math.max(20, +$('chunk').value || 100), delay = +$('delay').value || 0;
+  for (let i = 0; i < bytes.length; i += size) {
+    const part = bytes.slice(i, i + size);
+    if (writeChar.properties.writeWithoutResponse) await writeChar.writeValueWithoutResponse(part);
+    else await writeChar.writeValueWithResponse(part);
+    if (delay) await new Promise(r => setTimeout(r, delay));
+  }
+}
+
+// ---------- 이미지 처리 ----------
+let lastSource = null;   // 촬영/선택된 원본 (ImageBitmap | HTMLVideoElement 캡처 canvas)
+let lastBits = null;     // {w,h,data:Uint8Array(1=검정) }
+
+function render() {
+  const W = +$('width').value;
+  const rot = $('rotate').checked;
+  const sw = rot ? lastSource.height : lastSource.width, sh = rot ? lastSource.width : lastSource.height;
+  const H = Math.max(8, Math.round(sh * W / sw));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  g.save();
+  if (rot) { g.translate(W, 0); g.rotate(Math.PI / 2); g.drawImage(lastSource, 0, 0, H, W); }
+  else g.drawImage(lastSource, 0, 0, W, H);
+  g.restore();
+
+  const img = g.getImageData(0, 0, W, H), d = img.data;
+  const br = +$('bright').value, ct = +$('contrast').value;
+  const f = (259 * (ct + 255)) / (255 * (259 - ct));
+  const gray = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    let v = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
+    v = f * (v + br - 128) + 128;
+    gray[i] = Math.min(255, Math.max(0, v));
+  }
+  const bits = new Uint8Array(W * H);
+  if ($('dither').value === 'fs') {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, old = gray[i], nw = old < 128 ? 0 : 255, err = old - nw;
+      bits[i] = nw === 0 ? 1 : 0;
+      if (x + 1 < W) gray[i+1] += err * 7/16;
+      if (y + 1 < H) {
+        if (x > 0) gray[i+W-1] += err * 3/16;
+        gray[i+W] += err * 5/16;
+        if (x + 1 < W) gray[i+W+1] += err * 1/16;
+      }
+    }
+  } else for (let i = 0; i < W * H; i++) bits[i] = gray[i] < 128 ? 1 : 0;
+  if ($('invert').checked) for (let i = 0; i < bits.length; i++) bits[i] ^= 1;
+
+  // 미리보기
+  const p = $('preview'); p.width = W; p.height = H;
+  const pg = p.getContext('2d'), out = pg.createImageData(W, H);
+  for (let i = 0; i < bits.length; i++) { const v = bits[i] ? 0 : 255; out.data.set([v, v, v, 255], i * 4); }
+  pg.putImageData(out, 0, 0);
+  lastBits = { w: W, h: H, data: bits };
+  updateButtons();
+}
+
+// 1bpp 패킹 (MSB가 왼쪽 픽셀), invertBits=true면 검정=0
+function pack(b, invertBits) {
+  const wb = Math.ceil(b.w / 8), out = new Uint8Array(wb * b.h);
+  for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) {
+    if (b.data[y * b.w + x]) out[y * wb + (x >> 3)] |= 0x80 >> (x & 7);
+  }
+  if (invertBits) for (let i = 0; i < out.length; i++) out[i] ^= 0xff;
+  return { wb, bytes: out };
+}
+const cat = (...a) => { const o = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let p = 0; for (const x of a) { o.set(x, p); p += x.length; } return o; };
+const ascii = s => new TextEncoder().encode(s);
+
+function buildEscPos(b) {
+  const { wb, bytes } = pack(b, false);
+  const parts = [new Uint8Array([0x1b, 0x40])];                       // 초기화
+  // 한 번에 보내면 일부 기기가 버퍼 오버플로 → 255행씩 분할
+  for (let y = 0; y < b.h; y += 255) {
+    const h = Math.min(255, b.h - y);
+    parts.push(new Uint8Array([0x1d, 0x76, 0x30, 0, wb & 255, wb >> 8, h & 255, h >> 8]));
+    parts.push(bytes.subarray(y * wb, (y + h) * wb));
+  }
+  const feed = +$('feed').value || 0;
+  if (feed) parts.push(new Uint8Array([0x1b, 0x64, feed]));          // ESC d n
+  return cat(...parts);
+}
+function buildTspl(b) {
+  const { wb, bytes } = pack(b, true);                                // TSPL: 0=검정
+  const mmW = Math.round(b.w / 8), mmH = +$('labelH').value || 40;   // 203dpi ≈ 8dot/mm
+  return cat(ascii(`SIZE ${mmW} mm,${mmH} mm\r\nGAP 2 mm,0 mm\r\nDIRECTION 0\r\nCLS\r\nBITMAP 0,0,${wb},${b.h},0,`),
+             bytes, ascii('\r\nPRINT 1,1\r\n'));
+}
+
+async function printBits(b) {
+  if (!isConnected()) { setStatus('프린터가 연결되어 있지 않습니다', 'bad'); return; }
+  try {
+    setStatus('인쇄 중…');
+    const data = $('protocol').value === 'tspl' ? buildTspl(b) : buildEscPos(b);
+    log(`전송 ${data.length} bytes`);
+    await sendBytes(data);
+    setStatus('인쇄 전송 완료 ✔', 'ok');
+  } catch (e) { setStatus('인쇄 실패: ' + e.message, 'bad'); log(String(e)); }
+}
+$('btnPrint').onclick = () => lastBits && printBits(lastBits);
+$('btnTest').onclick = () => {
+  // 간단한 체크 패턴
+  const W = +$('width').value, H = 120, data = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+    data[y*W+x] = ((x >> 4) + (y >> 4)) & 1 || x < 4 || x >= W - 4 || y < 4 || y >= H - 4 ? 1 : 0;
+  printBits({ w: W, h: H, data });
+};
+
+// ---------- 카메라 ----------
+let facing = 'environment', stream = null;
+async function startCamera() {
+  try {
+    stream?.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 } }, audio: false });
+    $('video').srcObject = stream;
+  } catch (e) { log('카메라 사용 불가: ' + e.message + ' → "앨범/카메라앱" 버튼을 사용하세요'); }
+}
+$('btnFlip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); };
+$('btnShot').onclick = async () => {
+  const v = $('video');
+  if (!v.videoWidth) return log('카메라가 아직 준비되지 않았습니다');
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  lastSource = c; render();
+  if ($('autoPrint').checked && isConnected()) await printBits(lastBits);
+};
+$('btnFile').onclick = () => $('file').click();
+$('file').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  lastSource = await createImageBitmap(f, { imageOrientation: 'from-image' }); render();
+  if ($('autoPrint').checked && isConnected()) await printBits(lastBits);
+  e.target.value = '';
+};
+
+startCamera();
+if (!navigator.bluetooth) setStatus('Web Bluetooth 미지원 브라우저 — 안드로이드 크롬 또는 아이폰 Bluefy 앱에서 열어주세요', 'bad');
+</script>
+</body>
+</html>
