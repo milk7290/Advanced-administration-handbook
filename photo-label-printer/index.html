@@ -65,6 +65,7 @@
       <select id="protocol">
         <option value="escpos">ESC/POS (감열 영수증/포토 계열)</option>
         <option value="tspl">TSPL (라벨 계열)</option>
+        <option value="cpcl">CPCL (휴대용 라벨/영수증)</option>
       </select></label>
     <label>용지 폭(도트)
       <select id="width">
@@ -138,11 +139,12 @@ async function connect() {
     const to128 = u => typeof u === 'number' ? '0000' + u.toString(16).padStart(4, '0') + '-0000-1000-8000-00805f9b34fb' : u.toLowerCase();
     const full = [...new Set(KNOWN_SERVICES.map(to128))];                       // 중복 제거
     const common = [0xae30, 0xff00, 0x18f0, 0xffe0, 0xfee7].map(to128);
+    const ISSC = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
     const attempts = [
+      ['YHK 이름 + 프린터 서비스', { filters: [{ namePrefix: 'YHK' }], optionalServices: [ISSC] }],
+      ['전체 기기 + 프린터 서비스', { acceptAllDevices: true, optionalServices: [ISSC] }],
       ['전체 UUID(중복 제거)', { acceptAllDevices: true, optionalServices: full }],
       ['주요 5개 UUID', { acceptAllDevices: true, optionalServices: common }],
-      ['짧은 문자열 5개', { acceptAllDevices: true, optionalServices: ['ae30', 'ff00', '18f0', 'ffe0', 'fee7'] }],
-      ...common.map(u => ['단일 ' + u.slice(4, 8), { acceptAllDevices: true, optionalServices: [u] }]),
       ['서비스 지정 없음(서비스 접근 불가)', { acceptAllDevices: true }],
     ];
     let lastErr;
@@ -293,11 +295,17 @@ function buildTspl(b) {
              bytes, ascii('\r\nPRINT 1,1\r\n'));
 }
 
+function buildCpcl(b) {
+  const { wb, bytes } = pack(b, false);                               // CPCL: 1=검정
+  return cat(ascii(`! 0 200 200 ${b.h + 20} 1\r\nCG ${wb} ${b.h} 0 0 `), bytes, ascii('\r\nFORM\r\nPRINT\r\n'));
+}
+
 async function printBits(b) {
   if (!isConnected()) { setStatus('프린터가 연결되어 있지 않습니다', 'bad'); return; }
   try {
     setStatus('인쇄 중…');
-    const data = $('protocol').value === 'tspl' ? buildTspl(b) : buildEscPos(b);
+    const proto = $('protocol').value;
+    const data = proto === 'tspl' ? buildTspl(b) : proto === 'cpcl' ? buildCpcl(b) : buildEscPos(b);
     log(`전송 ${data.length} bytes`);
     await sendBytes(data);
     setStatus('인쇄 전송 완료 ✔', 'ok');
