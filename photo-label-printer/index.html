@@ -28,6 +28,8 @@
   .top { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:44px; }
   .logo { height:56px; width:auto; filter:invert(1); display:block; }
   .topr { display:flex; align-items:center; gap:4px; margin-left:auto; }
+  .store { font-size:22px; font-weight:800; line-height:1.15; color:#fff; max-width:58%; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:keep-all; font-family:"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif; }
+  #storeName { font-size:16px; letter-spacing:0; text-align:left; width:60%; padding:8px 10px; }
   .date { font-size:26px; line-height:1; color:#ffd9a8; white-space:nowrap; }
   .chip { position:absolute; left:10px; top:10px; z-index:2; font-size:12px; padding:4px 10px; border-radius:99px; background:rgba(0,0,0,.55); white-space:nowrap; }
   #logoPrev { height:44px; width:auto; background:#fff; padding:4px 8px; border-radius:8px; }
@@ -86,7 +88,8 @@
 <!-- 손님 화면 -->
 <main id="kiosk">
   <div class="top">
-    <img id="logo" class="logo" alt="BOBTAIL BAKERY">
+    <img id="logo" class="logo" alt="로고">
+    <div id="storeTxt" class="store" hidden></div>
     <div class="topr"><span id="dateTxt" class="date"></span><button id="btnAdmin" aria-label="관리자">⚙</button></div>
   </div>
   <div class="stage">
@@ -152,8 +155,14 @@
     <div class="card">
       <details open>
         <summary>인쇄 설정</summary>
-        <label>화면에 로고 표시<input id="logoShow" type="checkbox" checked></label>
-        <label>인쇄에 로고 넣기<input id="logoPrint" type="checkbox" checked></label>
+        <label>머리띠 표시 방식
+          <select id="hdrMode">
+            <option value="logo">로고 이미지</option>
+            <option value="name">상호명 글자</option>
+          </select></label>
+        <label>상호명<input id="storeName" type="text" maxlength="30" placeholder="예: 행복한 빵집" value="밥테일베이커리"></label>
+        <label>화면에 로고/상호명 표시<input id="logoShow" type="checkbox" checked></label>
+        <label>인쇄에 로고/상호명 넣기<input id="logoPrint" type="checkbox" checked></label>
         <label>인쇄 로고 크기(%)<input id="logoPct" type="range" min="20" max="80" value="42"></label>
         <div class="row" style="margin:4px 0 8px"><img id="logoPrev" alt=""><button id="btnLogo">로고 변경</button><button id="btnLogoReset">기본 로고</button></div>
         <input id="logoFile" type="file" accept="image/*" hidden>
@@ -233,7 +242,7 @@ const log = m => { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scroll
 const setStatus = (m, cls='') => { $('status').textContent = m; $('status').className = cls; };
 
 // ---------- 설정 저장 ----------
-const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','ack','density','cd','maxCopies','settleWait','nextWait','logoShow','logoPrint','logoPct','dateShow','datePrint','dfont','dfmt'];
+const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','ack','density','cd','hdrMode','storeName','maxCopies','settleWait','nextWait','logoShow','logoPrint','logoPct','dateShow','datePrint','dfont','dfmt'];
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('plp2') || '{}');
@@ -249,6 +258,7 @@ function saveSettings() {
 loadSettings();
 SETTINGS.forEach(k => $(k).addEventListener('change', () => { saveSettings(); applyHeader(); if (lastSource) render(); }));
 ['bright','contrast'].forEach(k => $(k).addEventListener('input', () => lastSource && render()));
+$('storeName').addEventListener('input', () => { saveSettings(); applyHeader(); if (lastSource) render(); });
 
 // ---------- Bluetooth ----------
 // 라벨/영수증 프린터에서 흔한 서비스 UUID (optionalServices에 없으면 접근 불가)
@@ -428,29 +438,73 @@ function loadLogo() {
     im.src = getLogoSrc();
   });
 }
+const NAME_FONT = '"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif';
+const hasLogo = () => !!(logoImg && logoImg.naturalWidth > 1);
+// 로고 방식이어도 로고 이미지가 없으면 상호명 글자로 대체
+const headerMode = () => ($('hdrMode').value === 'logo' && hasLogo()) ? 'logo' : 'name';
 function applyHeader() {
-  const L = $('logo');
-  L.src = getLogoSrc(); L.hidden = !$('logoShow').checked;
+  const mode = headerMode(), name = $('storeName').value.trim();
+  const L = $('logo'); L.src = getLogoSrc(); L.hidden = !($('logoShow').checked && mode === 'logo');
+  const S = $('storeTxt'); S.textContent = name; S.hidden = !($('logoShow').checked && mode === 'name' && name);
   $('logoPrev').src = getLogoSrc();
   const D = $('dateTxt');
   D.hidden = !$('dateShow').checked; D.textContent = fmtDate(); D.style.fontFamily = `"${$('dfont').value}", "Jua", sans-serif`;
   document.fonts?.load(fontCss(26), '0123456789.년월일()월화수목금토일').then(() => { D.style.fontFamily = `"${$('dfont').value}", "Jua", sans-serif`; }).catch(() => {});
 }
+function wrapLines(g, text, maxW) {
+  const lines = []; let cur = '';
+  const push = () => { if (cur) { lines.push(cur); cur = ''; } };
+  for (const w of text.split(/\s+/).filter(Boolean)) {
+    const t = cur ? cur + ' ' + w : w;
+    if (g.measureText(t).width <= maxW) { cur = t; continue; }
+    push();
+    if (g.measureText(w).width <= maxW) { cur = w; continue; }
+    for (const ch of w) { const t2 = cur + ch; if (g.measureText(t2).width <= maxW) cur = t2; else { push(); cur = ch; } }
+  }
+  push(); return lines;
+}
+// 상호명을 최대 2줄 안에 들어가는 가장 큰 글자 크기로 배치
+function layoutName(g, text, maxW) {
+  for (let size = 46; size >= 18; size -= 2) {
+    g.font = `800 ${size}px ${NAME_FONT}`;
+    const lines = wrapLines(g, text, maxW);
+    if (lines.length <= 2) return { size, lines, lh: Math.round(size * 1.15) };
+  }
+  g.font = `800 18px ${NAME_FONT}`;
+  const all = wrapLines(g, text, maxW), lines = all.slice(0, 2);
+  if (all.length > 2) { let t = lines[1]; while (t && g.measureText(t + '…').width > maxW) t = t.slice(0, -1); lines[1] = t + '…'; }   // 너무 길면 말줄임
+  return { size: 18, lines, lh: 21 };
+}
 function buildHeader(W) {
-  const useLogo = $('logoPrint').checked && logoImg && logoImg.naturalWidth;
+  const mode = headerMode(), name = $('storeName').value.trim();
+  const useLeft = $('logoPrint').checked && (mode === 'logo' || !!name);
   const useDate = $('datePrint').checked;
-  if (!useLogo && !useDate) return null;
+  if (!useLeft && !useDate) return null;
   const pad = 10, fs = Math.round(W * 0.085);
-  const lw = useLogo ? Math.round(W * (+$('logoPct').value || 42) / 100) : 0;
-  const lh = useLogo ? Math.round(lw * logoImg.naturalHeight / logoImg.naturalWidth) : 0;
+  const c = document.createElement('canvas'); c.width = W; c.height = 10;
+  let g = c.getContext('2d', { willReadFrequently: true });
+  g.font = fontCss(fs);
+  const dateW = useDate ? Math.ceil(g.measureText(fmtDate()).width) : 0;
+  const leftMaxW = W - pad * 2 - (useDate ? dateW + 14 : 0);
+  let lw = 0, lh = 0, nm = null;
+  if (useLeft && mode === 'logo') {
+    lw = Math.min(leftMaxW, Math.round(W * (+$('logoPct').value || 42) / 100));
+    lh = Math.round(lw * logoImg.naturalHeight / logoImg.naturalWidth);
+  } else if (useLeft) {
+    nm = layoutName(g, name, leftMaxW); lh = nm.lines.length * nm.lh;
+  }
   const H = Math.max(lh, useDate ? fs + 8 : 0) + pad * 2;
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d', { willReadFrequently: true });
+  c.height = H; g = c.getContext('2d', { willReadFrequently: true });
   g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
-  if (useLogo) g.drawImage(logoImg, pad, Math.round((H - lh) / 2), lw, lh);
+  if (lw) g.drawImage(logoImg, pad, Math.round((H - lh) / 2), lw, lh);
+  if (nm) {
+    g.fillStyle = '#000'; g.font = `800 ${nm.size}px ${NAME_FONT}`; g.textAlign = 'left'; g.textBaseline = 'middle';
+    const y0 = (H - lh) / 2 + nm.lh / 2;
+    nm.lines.forEach((ln, i) => g.fillText(ln, pad, Math.round(y0 + i * nm.lh)));
+  }
   if (useDate) { g.fillStyle = '#000'; g.font = fontCss(fs); g.textAlign = 'right'; g.textBaseline = 'middle'; g.fillText(fmtDate(), W - pad, H / 2 + 1); }
   const d = g.getImageData(0, 0, W, H).data, bits = new Uint8Array(W * H);
-  for (let i = 0; i < W * H; i++) bits[i] = (d[i*4] + d[i*4+1] + d[i*4+2]) / 3 < 150 ? 1 : 0;   // 글자/로고는 디더링 없이 선명하게
+  for (let i = 0; i < W * H; i++) bits[i] = (d[i*4] + d[i*4+1] + d[i*4+2]) / 3 < 150 ? 1 : 0;
   return { h: H, bits };
 }
 async function setCustomLogo(file) {
