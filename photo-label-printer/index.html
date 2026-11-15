@@ -67,6 +67,7 @@
     <summary>⚙ 인쇄 설정</summary>
     <label>프로토콜
       <select id="protocol">
+        <option value="yhk">YHK / WalkPrint (한 줄씩 전송)</option>
         <option value="escpos">ESC/POS (감열 영수증/포토 계열)</option>
         <option value="tspl">TSPL (라벨 계열)</option>
         <option value="cpcl">CPCL (휴대용 라벨/영수증)</option>
@@ -91,8 +92,9 @@
     <label>색 반전<input id="invert" type="checkbox"></label>
     <label>BLE 전송 단위(byte)<input id="chunk" type="number" value="100" min="20" max="512" style="width:80px"></label>
     <label>응답 대기 쓰기(느리지만 안정)<input id="ack" type="checkbox" checked></label>
+    <label>농도 (YHK, 1~40)<input id="density" type="number" value="15" min="1" max="40" style="width:80px"></label>
     <label>전송 간격(ms)<input id="delay" type="number" value="10" min="0" max="200" style="width:80px"></label>
-    <label>인쇄 후 용지 이송(줄)<input id="feed" type="number" value="3" min="0" max="20" style="width:80px"></label>
+    <label>인쇄 후 용지 이송(줄)<input id="feed" type="number" value="4" min="0" max="20" style="width:80px"></label>
     <label>쓰기 특성(Characteristic)<select id="charSel"><option value="">자동</option></select></label>
   </details>
 </div>
@@ -107,17 +109,17 @@ const log = m => { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scroll
 const setStatus = (m, cls='') => { $('status').textContent = m; $('status').className = cls; };
 
 // ---------- 설정 저장 ----------
-const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','autoPrint','ack'];
+const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','autoPrint','ack','density'];
 function loadSettings() {
   try {
-    const s = JSON.parse(localStorage.getItem('plp') || '{}');
+    const s = JSON.parse(localStorage.getItem('plp2') || '{}');
     for (const k of SETTINGS) if (k in s) { const e = $(k); e.type === 'checkbox' ? e.checked = s[k] : e.value = s[k]; }
   } catch {}
 }
 function saveSettings() {
   try {
     const s = {}; for (const k of SETTINGS) { const e = $(k); s[k] = e.type === 'checkbox' ? e.checked : e.value; }
-    localStorage.setItem('plp', JSON.stringify(s));
+    localStorage.setItem('plp2', JSON.stringify(s));
   } catch {}
 }
 loadSettings();
@@ -310,6 +312,34 @@ function buildTspl(b) {
              bytes, ascii('\r\nPRINT 1,1\r\n'));
 }
 
+// YHK/WalkPrint: BLE 패킷 1개 = 명령 1개. GS v 0 은 패킷당 한 줄(48바이트)만 인쇄됨 → 줄마다 따로 전송
+function buildYhkPackets(b) {
+  const { wb, bytes } = pack(b, false);
+  const ROW = 48, pk = [];
+  pk.push(new Uint8Array([0x1b, 0x40]));                                         // 초기화
+  const nn = Math.min(40, Math.max(1, +$('density').value || 15));
+  pk.push(new Uint8Array([0x1d, 0x49, 0xf0, nn]));                               // 농도
+  for (let y = 0; y < b.h; y++) {
+    const row = new Uint8Array(8 + ROW);
+    row.set([0x1d, 0x76, 0x30, 0x00, 0x30, 0x00, 0x01, 0x00], 0);
+    row.set(bytes.subarray(y * wb, y * wb + Math.min(wb, ROW)), 8);              // 384도트 초과분은 잘림
+    pk.push(row);
+  }
+  pk.push(new Uint8Array(Math.max(1, +$('feed').value || 4)).fill(0x0a));          // 용지 이송
+  return pk;
+}
+async function sendPackets(list) {
+  abortFlag = false;
+  const delay = +$('delay').value || 0;
+  const ack = writeChar.properties.write;
+  for (const part of list) {
+    if (abortFlag) throw new Error('사용자가 중지함');
+    if (ack) await writeChar.writeValueWithResponse(part);
+    else { await writeChar.writeValueWithoutResponse(part); await new Promise(r => setTimeout(r, Math.max(delay, 20))); }
+    if (ack && delay) await new Promise(r => setTimeout(r, delay));
+  }
+}
+
 function buildCpcl(b) {
   const { wb, bytes } = pack(b, false);                               // CPCL: 1=검정
   return cat(ascii(`! 0 200 200 ${b.h + 20} 1\r\nCG ${wb} ${b.h} 0 0 `), bytes, ascii('\r\nFORM\r\nPRINT\r\n'));
@@ -320,6 +350,7 @@ async function printBits(b) {
   try {
     setStatus('인쇄 중…');
     const proto = $('protocol').value;
+    if (proto === 'yhk') { const pk = buildYhkPackets(b); log(`YHK 전송 ${pk.length} 패킷`); await sendPackets(pk); setStatus('인쇄 전송 완료 ✔', 'ok'); return; }
     const data = proto === 'tspl' ? buildTspl(b) : proto === 'cpcl' ? buildCpcl(b) : buildEscPos(b);
     log(`전송 ${data.length} bytes`);
     await sendBytes(data);
