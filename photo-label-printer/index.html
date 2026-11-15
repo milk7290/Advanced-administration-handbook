@@ -135,17 +135,21 @@ async function connect() {
   try {
     log('--- 연결 시작 ---');
     // Bluefy 등 일부 브라우저는 UUID 형식/목록에 민감 → 여러 방식으로 순차 시도
-    const full = KNOWN_SERVICES.map(u => typeof u === 'number' ? u.toString(16).padStart(4, '0').replace(/^(....)$/, '0000$1-0000-1000-8000-00805f9b34fb') : u);
+    const to128 = u => typeof u === 'number' ? '0000' + u.toString(16).padStart(4, '0') + '-0000-1000-8000-00805f9b34fb' : u.toLowerCase();
+    const full = [...new Set(KNOWN_SERVICES.map(to128))];                       // 중복 제거
+    const common = [0xae30, 0xff00, 0x18f0, 0xffe0, 0xfee7].map(to128);
     const attempts = [
-      ['전체 UUID 목록', { acceptAllDevices: true, optionalServices: full }],
-      ['숫자 UUID 목록', { acceptAllDevices: true, optionalServices: KNOWN_SERVICES }],
-      ['서비스 지정 없음', { acceptAllDevices: true }],
+      ['전체 UUID(중복 제거)', { acceptAllDevices: true, optionalServices: full }],
+      ['주요 5개 UUID', { acceptAllDevices: true, optionalServices: common }],
+      ['짧은 문자열 5개', { acceptAllDevices: true, optionalServices: ['ae30', 'ff00', '18f0', 'ffe0', 'fee7'] }],
+      ...common.map(u => ['단일 ' + u.slice(4, 8), { acceptAllDevices: true, optionalServices: [u] }]),
+      ['서비스 지정 없음(서비스 접근 불가)', { acceptAllDevices: true }],
     ];
     let lastErr;
     for (const [name, opt] of attempts) {
-      try { log('장치 검색 시도: ' + name); device = await navigator.bluetooth.requestDevice(opt); lastErr = null; break; }
-      catch (e) { lastErr = e; log(`  실패(${name}): typeof=${typeof e} 값=${errText(e)} ${e && e.code !== undefined ? 'code=' + e.code : ''}`);
-        if (e && e.name === 'NotFoundError') break; }   // 사용자가 창을 닫음/목록 비어 있음 → 재시도 무의미
+      try { log('장치 검색 시도: ' + name); device = await navigator.bluetooth.requestDevice(opt); lastErr = null; log('  → 검색창 열림/선택됨 (' + name + ')'); break; }
+      catch (e) { lastErr = e; log(`  실패(${name}): ${errText(e)}`);
+        if (e && e.name === 'NotFoundError') break; }
     }
     if (lastErr) throw lastErr;
     log('선택됨: ' + (device.name || '(이름 없음)') + ' id=' + device.id);
