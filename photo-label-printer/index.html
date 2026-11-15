@@ -2,104 +2,179 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#111111">
-<title>사진 라벨 인쇄</title>
+<title>사진 즉석 인쇄</title>
 <style>
-  :root { --bg:#111; --fg:#f2f2f2; --card:#1e1e1e; --accent:#4da3ff; --ok:#4cd07d; --bad:#ff6b6b; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 -apple-system,system-ui,sans-serif;
-         padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); max-width:560px; margin-inline:auto; }
-  h1 { font-size:20px; margin:16px 0 8px; }
-  .card { background:var(--card); border-radius:14px; padding:12px; margin:12px 0; }
-  button { font:inherit; border:0; border-radius:10px; padding:12px 16px; background:#333; color:var(--fg); }
-  button.primary { background:var(--accent); color:#001a33; font-weight:700; }
+  :root { --bg:#111; --fg:#f4f4f4; --card:#1e1e1e; --accent:#4da3ff; --ok:#4cd07d; --bad:#ff6b6b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.4 -apple-system,system-ui,sans-serif; -webkit-user-select:none; user-select:none; }
+  body.lock { overflow:hidden; }
+  button { font:inherit; border:0; border-radius:12px; padding:12px 16px; background:#333; color:var(--fg); }
   button:disabled { opacity:.4; }
+  button[hidden], [hidden] { display:none !important; }
+
+  /* ----- 손님 화면 ----- */
+  #kiosk { height:100%; display:flex; flex-direction:column; padding:calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 16px); max-width:560px; margin:0 auto; }
+  .top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .top h1 { font-size:19px; margin:0; white-space:nowrap; }
+  .chip { font-size:12px; padding:4px 10px; border-radius:99px; background:#262626; white-space:nowrap; margin-left:auto; }
+  .chip.ok { color:var(--ok); } .chip.bad { color:var(--bad); }
+  #btnAdmin { background:transparent; font-size:20px; padding:6px 10px; opacity:.5; }
+  .stage { position:relative; flex:1; min-height:0; margin:12px 0; border-radius:20px; overflow:hidden; background:#000; }
+  #video { width:100%; height:100%; object-fit:cover; display:block; }
+  #camErr { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; background:#000; }
+  #btnFlip { position:absolute; right:10px; top:10px; background:rgba(0,0,0,.45); border-radius:99px; padding:10px 14px; font-size:18px; }
+  #count { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:140px; font-weight:800; text-shadow:0 4px 24px rgba(0,0,0,.6); background:rgba(0,0,0,.25); }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .2s; }
+  #flash.on { opacity:.9; transition:none; }
+  #hint { text-align:center; font-size:15px; color:#bbb; min-height:22px; }
+  #btnShot { width:100%; margin-top:10px; padding:20px; font-size:24px; font-weight:800; border-radius:99px; background:var(--accent); color:#001a33; }
+  #result { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.92); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:24px; text-align:center; }
+  #rTitle { font-size:28px; font-weight:800; }
+  #rSub { font-size:18px; color:#ccc; min-height:26px; }
+  #kPreview { max-width:70%; max-height:45vh; background:#fff; border-radius:8px; image-rendering:auto; }
+  #btnCancel { background:#a33; padding:14px 28px; font-size:18px; }
+  #btnDone { padding:14px 28px; font-size:18px; }
+
+  /* ----- 비밀번호 창 ----- */
+  #pwModal { position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; padding:24px; }
+  .box { background:#222; border-radius:16px; padding:20px; width:100%; max-width:320px; display:flex; flex-direction:column; gap:12px; }
+  .box h2 { margin:0; font-size:18px; }
+  input[type=password], input[type=text], input[type=tel] { font:inherit; font-size:22px; letter-spacing:4px; text-align:center; background:#333; color:var(--fg); border:0; border-radius:10px; padding:12px; width:100%; }
+  #pwErr { color:var(--bad); font-size:14px; margin:0; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .row > * { flex:1; }
-  video, #preview { width:100%; border-radius:10px; background:#000; display:block; }
-  #preview { background:#fff; image-rendering:pixelated; max-height:50vh; object-fit:contain; }
+  .primary { background:var(--accent); color:#001a33; font-weight:700; }
+
+  /* ----- 관리자 화면 ----- */
+  #admin { position:fixed; inset:0; z-index:25; background:var(--bg); overflow:auto; padding:calc(env(safe-area-inset-top) + 8px) 16px calc(env(safe-area-inset-bottom) + 24px); -webkit-user-select:text; user-select:text; }
+  #admin .wrap { max-width:560px; margin:0 auto; }
+  #admin h2 { font-size:20px; margin:12px 0 4px; }
+  .card { background:var(--card); border-radius:14px; padding:12px; margin:12px 0; }
+  #preview { width:100%; border-radius:10px; background:#fff; image-rendering:pixelated; max-height:40vh; object-fit:contain; display:block; }
   label { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; }
   select, input[type=number] { font:inherit; background:#333; color:var(--fg); border:0; border-radius:8px; padding:8px; }
   input[type=range] { flex:1; }
-  #status { font-size:14px; }
-  #status.ok { color:var(--ok); } #status.bad { color:var(--bad); }
-  #log { font:12px/1.3 ui-monospace,monospace; white-space:pre-wrap; max-height:140px; overflow:auto; color:#aaa; }
+  #status { font-size:14px; margin-top:6px; } #status.ok { color:var(--ok); } #status.bad { color:var(--bad); }
+  #log { font:12px/1.3 ui-monospace,monospace; white-space:pre-wrap; max-height:160px; overflow:auto; color:#aaa; }
   details summary { cursor:pointer; padding:4px 0; }
 </style>
 </head>
 <body>
-<h1>📷 사진 → 라벨 인쇄</h1>
 
-<div class="card">
-  <div class="row">
-    <button id="btnConnect" class="primary">프린터 연결</button>
-    <button id="btnDisconnect" disabled>연결 해제</button>
+<!-- 손님 화면 -->
+<main id="kiosk">
+  <div class="top">
+    <h1>📷 즉석 인쇄</h1>
+    <span id="chip" class="chip bad">● 프린터 연결 필요</span>
+    <button id="btnAdmin" aria-label="관리자">⚙</button>
   </div>
-  <div id="status">프린터 미연결</div>
+  <div class="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <div id="camErr" hidden>카메라를 사용할 수 없어요.<br>브라우저의 카메라 권한을 허용해 주세요.</div>
+    <button id="btnFlip" aria-label="카메라 전환">🔄</button>
+    <div id="count" hidden></div>
+    <div id="flash"></div>
+  </div>
+  <div id="hint"></div>
+  <button id="btnShot" disabled>📸 사진 찍기</button>
+</main>
+
+<div id="result" hidden>
+  <canvas id="kPreview"></canvas>
+  <div id="rTitle"></div>
+  <div id="rSub"></div>
+  <button id="btnCancel" hidden>취소</button>
+  <button id="btnDone" hidden>확인</button>
 </div>
 
-<div class="card">
-  <video id="video" playsinline muted autoplay></video>
-  <div class="row" style="margin-top:8px">
-    <button id="btnShot" class="primary">📸 촬영</button>
-    <button id="btnFlip">카메라 전환</button>
-    <button id="btnFile">앨범/카메라앱</button>
-  </div>
-  <input id="file" type="file" accept="image/*" capture="environment" hidden>
-  <label><span>촬영 즉시 인쇄</span><input id="autoPrint" type="checkbox" checked></label>
-</div>
-
-<div class="card">
-  <canvas id="preview"></canvas>
-  <div class="row" style="margin-top:8px">
-    <button id="btnPrint" class="primary" disabled>🖨 인쇄</button>
-    <button id="btnTest">테스트 인쇄</button>
-  </div>
-  <div class="row" style="margin-top:8px">
-    <button id="btnStop" style="background:#a33">⏹ 중지</button>
-    <button id="btnLang">언어 확인(텍스트)</button>
+<!-- 비밀번호 -->
+<div id="pwModal" hidden>
+  <div class="box">
+    <h2>🔒 관리자 비밀번호</h2>
+    <input id="pwInput" type="password" inputmode="numeric" autocomplete="off" placeholder="••••">
+    <p id="pwErr" hidden>비밀번호가 맞지 않아요</p>
+    <div class="row"><button id="pwCancel">취소</button><button id="pwOk" class="primary">확인</button></div>
   </div>
 </div>
 
-<div class="card">
-  <details>
-    <summary>⚙ 인쇄 설정</summary>
-    <label>프로토콜
-      <select id="protocol">
-        <option value="yhk">YHK / WalkPrint (한 줄씩 전송)</option>
-        <option value="escpos">ESC/POS (감열 영수증/포토 계열)</option>
-        <option value="tspl">TSPL (라벨 계열)</option>
-        <option value="cpcl">CPCL (휴대용 라벨/영수증)</option>
-      </select></label>
-    <label>용지 폭(도트)
-      <select id="width">
-        <option value="384">384 (58mm, 203dpi)</option>
-        <option value="576">576 (80mm)</option>
-        <option value="320">320 (40mm)</option>
-        <option value="240">240 (30mm)</option>
-        <option value="96">96 (12mm)</option>
-      </select></label>
-    <label>라벨 높이(mm, TSPL)<input id="labelH" type="number" value="40" min="10" max="200" style="width:80px"></label>
-    <label>변환
-      <select id="dither">
-        <option value="fs">디더링 (사진용)</option>
-        <option value="thr">흑백 임계값 (글자/로고)</option>
-      </select></label>
-    <label>밝기 <input id="bright" type="range" min="-80" max="80" value="0"></label>
-    <label>대비 <input id="contrast" type="range" min="-50" max="100" value="30"></label>
-    <label>90° 회전<input id="rotate" type="checkbox"></label>
-    <label>색 반전<input id="invert" type="checkbox"></label>
-    <label>BLE 전송 단위(byte)<input id="chunk" type="number" value="100" min="20" max="512" style="width:80px"></label>
-    <label>응답 대기 쓰기(느리지만 안정)<input id="ack" type="checkbox" checked></label>
-    <label>농도 (YHK, 1~40)<input id="density" type="number" value="15" min="1" max="40" style="width:80px"></label>
-    <label>전송 간격(ms)<input id="delay" type="number" value="10" min="0" max="200" style="width:80px"></label>
-    <label>인쇄 후 용지 이송(줄)<input id="feed" type="number" value="4" min="0" max="20" style="width:80px"></label>
-    <label>쓰기 특성(Characteristic)<select id="charSel"><option value="">자동</option></select></label>
-  </details>
-</div>
+<!-- 관리자 -->
+<div id="admin" hidden>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between"><h2 style="flex:3">⚙ 관리자</h2><button id="adminClose" class="primary">닫기</button></div>
 
-<div class="card"><div id="log"></div></div>
+    <div class="card">
+      <div class="row">
+        <button id="btnConnect" class="primary">프린터 연결</button>
+        <button id="btnDisconnect" disabled>연결 해제</button>
+      </div>
+      <div id="status">프린터 미연결</div>
+    </div>
+
+    <div class="card">
+      <canvas id="preview"></canvas>
+      <div class="row" style="margin-top:8px">
+        <button id="btnPrint" class="primary" disabled>🖨 마지막 사진 인쇄</button>
+        <button id="btnTest">테스트 인쇄</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnStop" style="background:#a33">⏹ 중지</button>
+        <button id="btnFile">사진 파일 불러오기</button>
+        <button id="btnLang">언어 확인(텍스트)</button>
+      </div>
+      <input id="file" type="file" accept="image/*" hidden>
+    </div>
+
+    <div class="card">
+      <details open>
+        <summary>인쇄 설정</summary>
+        <label>촬영 전 카운트다운(초, 0=없음)<input id="cd" type="number" value="3" min="0" max="9" style="width:80px"></label>
+        <label>프로토콜
+          <select id="protocol">
+            <option value="yhk">YHK / WalkPrint (한 줄씩 전송)</option>
+            <option value="escpos">ESC/POS</option>
+            <option value="tspl">TSPL</option>
+            <option value="cpcl">CPCL</option>
+          </select></label>
+        <label>용지 폭(도트)
+          <select id="width">
+            <option value="384">384 (58mm)</option>
+            <option value="576">576 (80mm)</option>
+            <option value="320">320 (40mm)</option>
+            <option value="240">240 (30mm)</option>
+            <option value="96">96 (12mm)</option>
+          </select></label>
+        <label>농도 (YHK, 1~40)<input id="density" type="number" value="15" min="1" max="40" style="width:80px"></label>
+        <label>변환
+          <select id="dither">
+            <option value="fs">디더링 (사진용)</option>
+            <option value="thr">흑백 임계값 (글자/로고)</option>
+          </select></label>
+        <label>밝기 <input id="bright" type="range" min="-80" max="80" value="0"></label>
+        <label>대비 <input id="contrast" type="range" min="-50" max="100" value="30"></label>
+        <label>90° 회전<input id="rotate" type="checkbox"></label>
+        <label>색 반전<input id="invert" type="checkbox"></label>
+        <label>라벨 높이(mm, TSPL)<input id="labelH" type="number" value="40" min="10" max="200" style="width:80px"></label>
+        <label>BLE 전송 단위(byte)<input id="chunk" type="number" value="100" min="20" max="512" style="width:80px"></label>
+        <label>응답 대기 쓰기(느리지만 안정)<input id="ack" type="checkbox" checked></label>
+        <label>전송 간격(ms)<input id="delay" type="number" value="10" min="0" max="200" style="width:80px"></label>
+        <label>인쇄 후 용지 이송(줄)<input id="feed" type="number" value="4" min="0" max="20" style="width:80px"></label>
+        <label>쓰기 특성<select id="charSel"><option value="">자동</option></select></label>
+      </details>
+    </div>
+
+    <div class="card">
+      <details>
+        <summary>관리자 비밀번호 변경</summary>
+        <div class="row" style="margin-top:8px"><input id="pwNew" type="tel" inputmode="numeric" placeholder="새 숫자 비밀번호"><button id="pwSave">저장</button></div>
+      </details>
+    </div>
+
+    <div class="card"><div id="log"></div></div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -109,7 +184,7 @@ const log = m => { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scroll
 const setStatus = (m, cls='') => { $('status').textContent = m; $('status').className = cls; };
 
 // ---------- 설정 저장 ----------
-const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','autoPrint','ack','density'];
+const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','ack','density','cd'];
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('plp2') || '{}');
@@ -162,7 +237,7 @@ async function connect() {
     }
     if (lastErr) throw lastErr;
     log('선택됨: ' + (device.name || '(이름 없음)') + ' id=' + device.id);
-    device.addEventListener('gattserverdisconnected', () => { setStatus('연결 끊김', 'bad'); updateButtons(); });
+    device.addEventListener('gattserverdisconnected', () => { writeChar = null; setStatus('연결 끊김', 'bad'); updateButtons(); });
     setStatus('연결 중…');
     step = 'GATT 연결';
     const server = await device.gatt.connect();
@@ -206,6 +281,7 @@ const isConnected = () => !!(device?.gatt?.connected && writeChar);
 function updateButtons() {
   $('btnDisconnect').disabled = !isConnected();
   $('btnPrint').disabled = !isConnected() || !lastBits;
+  refreshKiosk();
 }
 $('btnConnect').onclick = connect;
 $('btnDisconnect').onclick = () => { disconnect(); updateButtons(); };
@@ -328,8 +404,9 @@ function buildYhkPackets(b) {
   pk.push(new Uint8Array(Math.max(1, +$('feed').value || 4)).fill(0x0a));          // 용지 이송
   return pk;
 }
-async function sendPackets(list) {
+async function sendPackets(list, onProgress) {
   abortFlag = false;
+  let n = 0;
   const delay = +$('delay').value || 0;
   const ack = writeChar.properties.write;
   for (const part of list) {
@@ -337,6 +414,7 @@ async function sendPackets(list) {
     if (ack) await writeChar.writeValueWithResponse(part);
     else { await writeChar.writeValueWithoutResponse(part); await new Promise(r => setTimeout(r, Math.max(delay, 20))); }
     if (ack && delay) await new Promise(r => setTimeout(r, delay));
+    if (onProgress) onProgress(++n / list.length);
   }
 }
 
@@ -345,17 +423,18 @@ function buildCpcl(b) {
   return cat(ascii(`! 0 200 200 ${b.h + 20} 1\r\nCG ${wb} ${b.h} 0 0 `), bytes, ascii('\r\nFORM\r\nPRINT\r\n'));
 }
 
-async function printBits(b) {
-  if (!isConnected()) { setStatus('프린터가 연결되어 있지 않습니다', 'bad'); return; }
+async function printBits(b, onProgress) {
+  if (!isConnected()) { setStatus('프린터가 연결되어 있지 않습니다', 'bad'); return false; }
   try {
     setStatus('인쇄 중…');
     const proto = $('protocol').value;
-    if (proto === 'yhk') { const pk = buildYhkPackets(b); log(`YHK 전송 ${pk.length} 패킷`); await sendPackets(pk); setStatus('인쇄 전송 완료 ✔', 'ok'); return; }
+    if (proto === 'yhk') { const pk = buildYhkPackets(b); log(`YHK 전송 ${pk.length} 패킷`); await sendPackets(pk, onProgress); setStatus('인쇄 전송 완료 ✔', 'ok'); return true; }
     const data = proto === 'tspl' ? buildTspl(b) : proto === 'cpcl' ? buildCpcl(b) : buildEscPos(b);
     log(`전송 ${data.length} bytes`);
     await sendBytes(data);
     setStatus('인쇄 전송 완료 ✔', 'ok');
-  } catch (e) { setStatus('인쇄 실패: ' + e.message, 'bad'); log(String(e)); }
+    return true;
+  } catch (e) { setStatus('인쇄 실패: ' + e.message, 'bad'); log(String(e)); return false; }
 }
 $('btnPrint').onclick = () => lastBits && printBits(lastBits);
 $('btnLang').onclick = async () => {
@@ -389,26 +468,81 @@ async function startCamera() {
     stream?.getTracks().forEach(t => t.stop());
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 } }, audio: false });
     $('video').srcObject = stream;
-  } catch (e) { log('카메라 사용 불가: ' + e.message + ' → "앨범/카메라앱" 버튼을 사용하세요'); }
+    $('camErr').hidden = true;
+  } catch (e) { $('camErr').hidden = false; log('카메라 사용 불가: ' + errText(e)); }
 }
 $('btnFlip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); };
-$('btnShot').onclick = async () => {
-  const v = $('video');
-  if (!v.videoWidth) return log('카메라가 아직 준비되지 않았습니다');
-  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-  c.getContext('2d').drawImage(v, 0, 0);
-  lastSource = c; render();
-  if ($('autoPrint').checked && isConnected()) await printBits(lastBits);
-};
 $('btnFile').onclick = () => $('file').click();
 $('file').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
   lastSource = await createImageBitmap(f, { imageOrientation: 'from-image' }); render();
-  if ($('autoPrint').checked && isConnected()) await printBits(lastBits);
   e.target.value = '';
 };
 
+// ---------- 손님용(키오스크) 화면 ----------
+let busy = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function refreshKiosk() {
+  const ok = isConnected();
+  $('chip').textContent = ok ? '● 프린터 준비됨' : '● 프린터 연결 필요';
+  $('chip').className = 'chip ' + (ok ? 'ok' : 'bad');
+  $('btnShot').disabled = busy || !ok;
+  $('hint').textContent = ok ? '버튼을 누르면 사진이 바로 인쇄돼요' : '프린터가 준비되지 않았어요. 직원에게 알려 주세요';
+}
+function showResult(title, sub, showCancel, showClose) {
+  $('result').hidden = false;
+  $('rTitle').textContent = title; $('rSub').textContent = sub;
+  $('btnCancel').hidden = !showCancel; $('btnDone').hidden = !showClose;
+}
+async function kioskShot() {
+  if (busy) return;
+  const v = $('video');
+  if (!isConnected()) return refreshKiosk();
+  if (!v.videoWidth) { $('hint').textContent = '카메라를 준비하고 있어요. 잠시 후 다시 눌러 주세요'; return; }
+  busy = true; refreshKiosk();
+  try {
+    const cd = Math.max(0, Math.min(9, +$('cd').value || 0));
+    for (let i = cd; i > 0; i--) { $('count').hidden = false; $('count').textContent = i; await sleep(1000); }
+    $('count').hidden = true;
+    const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0);
+    $('flash').classList.add('on'); setTimeout(() => $('flash').classList.remove('on'), 200);
+    lastSource = c; render();
+    const kp = $('kPreview'); kp.width = lastBits.w; kp.height = lastBits.h; kp.getContext('2d').drawImage($('preview'), 0, 0);
+    showResult('인쇄 중이에요…', '0%', true, false);
+    const ok = await printBits(lastBits, p => { $('rSub').textContent = Math.round(p * 100) + '%'; });
+    if (ok) { showResult('인쇄 완료! 🎉', '용지를 가져가 주세요', false, false); await sleep(5000); }
+    else if (abortFlag) { showResult('인쇄를 취소했어요', '', false, true); await sleep(2500); }
+    else { showResult('인쇄에 실패했어요', '직원에게 알려 주세요', false, true); await sleep(8000); }
+  } finally {
+    $('count').hidden = true; $('result').hidden = true; busy = false; refreshKiosk();
+  }
+}
+$('btnShot').onclick = kioskShot;
+$('btnCancel').onclick = () => $('btnStop').onclick();
+$('btnDone').onclick = () => { $('result').hidden = true; };
+
+// ---------- 관리자(비밀번호) ----------
+const getPw = () => { try { return localStorage.getItem('plp_pw') || '1234'; } catch { return '1234'; } };
+$('btnAdmin').onclick = () => { $('pwInput').value = ''; $('pwErr').hidden = true; $('pwModal').hidden = false; setTimeout(() => $('pwInput').focus(), 50); };
+$('pwCancel').onclick = () => { $('pwModal').hidden = true; };
+function tryPw() {
+  if ($('pwInput').value === getPw()) { $('pwModal').hidden = true; $('admin').hidden = false; document.body.classList.add('lock'); window.scrollTo(0, 0); }
+  else { $('pwErr').hidden = false; $('pwInput').value = ''; }
+}
+$('pwOk').onclick = tryPw;
+$('pwInput').addEventListener('keydown', e => { if (e.key === 'Enter') tryPw(); });
+$('adminClose').onclick = () => { $('admin').hidden = true; document.body.classList.remove('lock'); refreshKiosk(); };
+$('pwSave').onclick = () => {
+  const v = $('pwNew').value.trim();
+  if (!/^\d{4,12}$/.test(v)) return alert('비밀번호는 숫자 4~12자리로 입력해 주세요');
+  try { localStorage.setItem('plp_pw', v); $('pwNew').value = ''; alert('비밀번호를 변경했어요'); } catch { alert('저장 실패'); }
+};
+
 startCamera();
+refreshKiosk();
+try { navigator.wakeLock?.request('screen').catch(() => {}); } catch {}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) try { navigator.wakeLock?.request('screen').catch(() => {}); } catch {} });
 if (!navigator.bluetooth) setStatus('Web Bluetooth 미지원 브라우저 — 안드로이드 크롬 또는 아이폰 Bluefy 앱에서 열어주세요', 'bad');
 </script>
 </body>
