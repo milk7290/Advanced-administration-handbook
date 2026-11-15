@@ -56,6 +56,10 @@
     <button id="btnPrint" class="primary" disabled>🖨 인쇄</button>
     <button id="btnTest">테스트 인쇄</button>
   </div>
+  <div class="row" style="margin-top:8px">
+    <button id="btnStop" style="background:#a33">⏹ 중지</button>
+    <button id="btnLang">언어 확인(텍스트)</button>
+  </div>
 </div>
 
 <div class="card">
@@ -86,6 +90,7 @@
     <label>90° 회전<input id="rotate" type="checkbox"></label>
     <label>색 반전<input id="invert" type="checkbox"></label>
     <label>BLE 전송 단위(byte)<input id="chunk" type="number" value="100" min="20" max="512" style="width:80px"></label>
+    <label>응답 대기 쓰기(느리지만 안정)<input id="ack" type="checkbox" checked></label>
     <label>전송 간격(ms)<input id="delay" type="number" value="10" min="0" max="200" style="width:80px"></label>
     <label>인쇄 후 용지 이송(줄)<input id="feed" type="number" value="3" min="0" max="20" style="width:80px"></label>
     <label>쓰기 특성(Characteristic)<select id="charSel"><option value="">자동</option></select></label>
@@ -102,7 +107,7 @@ const log = m => { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scroll
 const setStatus = (m, cls='') => { $('status').textContent = m; $('status').className = cls; };
 
 // ---------- 설정 저장 ----------
-const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','autoPrint'];
+const SETTINGS = ['protocol','width','labelH','dither','bright','contrast','rotate','invert','chunk','delay','feed','autoPrint','ack'];
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('plp') || '{}');
@@ -203,15 +208,25 @@ function updateButtons() {
 $('btnConnect').onclick = connect;
 $('btnDisconnect').onclick = () => { disconnect(); updateButtons(); };
 
+let abortFlag = false;
 async function sendBytes(bytes) {
+  abortFlag = false;
   const size = Math.max(20, +$('chunk').value || 100), delay = +$('delay').value || 0;
+  const useAck = $('ack').checked && writeChar.properties.write;
   for (let i = 0; i < bytes.length; i += size) {
+    if (abortFlag) throw new Error('사용자가 중지함');
     const part = bytes.slice(i, i + size);
-    if (writeChar.properties.writeWithoutResponse) await writeChar.writeValueWithoutResponse(part);
+    if (useAck) await writeChar.writeValueWithResponse(part);
+    else if (writeChar.properties.writeWithoutResponse) await writeChar.writeValueWithoutResponse(part);
     else await writeChar.writeValueWithResponse(part);
     if (delay) await new Promise(r => setTimeout(r, delay));
   }
 }
+$('btnStop').onclick = async () => {
+  abortFlag = true; setStatus('중지 요청됨…');
+  try { if (isConnected()) { await new Promise(r => setTimeout(r, 300)); await writeChar.writeValueWithResponse(new Uint8Array([0x1b, 0x40])); } } catch {}
+  setStatus('중지됨', 'bad');
+};
 
 // ---------- 이미지 처리 ----------
 let lastSource = null;   // 촬영/선택된 원본 (ImageBitmap | HTMLVideoElement 캡처 canvas)
@@ -312,6 +327,22 @@ async function printBits(b) {
   } catch (e) { setStatus('인쇄 실패: ' + e.message, 'bad'); log(String(e)); }
 }
 $('btnPrint').onclick = () => lastBits && printBits(lastBits);
+$('btnLang').onclick = async () => {
+  if (!isConnected()) return setStatus('프린터가 연결되어 있지 않습니다', 'bad');
+  const jobs = [
+    ['ESC/POS', cat(new Uint8Array([0x1b, 0x40]), ascii('ESC/POS OK\n1234567890\n\n\n'))],
+    ['CPCL', ascii('! 0 200 200 120 1\r\nTEXT 4 0 10 10 CPCL OK\r\nPRINT\r\n')],
+    ['TSPL', ascii('SIZE 48 mm,25 mm\r\nGAP 2 mm,0 mm\r\nCLS\r\nTEXT 10,10,"3",0,1,1,"TSPL OK"\r\nPRINT 1,1\r\n')],
+  ];
+  try {
+    for (const [name, data] of jobs) {
+      setStatus(`언어 확인: ${name} 전송 중…`);
+      await sendBytes(data);
+      await new Promise(r => setTimeout(r, 2500));
+    }
+    setStatus('언어 확인 전송 완료 — 글자가 읽히게 나온 이름을 확인하세요 (ESC/POS, CPCL, TSPL 순서)', 'ok');
+  } catch (e) { setStatus('중지/실패: ' + errText(e), 'bad'); }
+};
 $('btnTest').onclick = () => {
   // 간단한 체크 패턴
   const W = +$('width').value, H = 120, data = new Uint8Array(W * H);
